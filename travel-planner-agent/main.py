@@ -1,8 +1,11 @@
+import asyncio
 import json
 import os
 
 import requests
 from fastapi import FastAPI
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -13,49 +16,46 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 TRAVEL_POLICY_URL = os.environ.get("TRAVEL_POLICY_URL")
 
+# Injected by the "MCP" binding on this agent in the console (you choose these
+# env var names when you click + Add under Configure MCP Tools).
+MCP_TOOLS_URL = os.environ.get("MCP_TOOLS_URL")
+MCP_TOOLS_API_KEY = os.environ.get("MCP_TOOLS_API_KEY")
+
 client = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
 
 
-# --- Mock flight/hotel tools -------------------------------------------------
+# --- Real flight/hotel tools, called through the MCP proxy -------------------
+
+def call_mcp_tool(name: str, arguments: dict) -> list:
+    async def _call():
+        headers = {"Authorization": f"Bearer {MCP_TOOLS_API_KEY}"}
+        async with streamablehttp_client(MCP_TOOLS_URL, headers=headers) as (
+            read,
+            write,
+            _,
+        ):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(name, arguments)
+                return [
+                    json.loads(block.text)
+                    for block in result.content
+                    if block.type == "text"
+                ]
+
+    return asyncio.run(_call())
+
 
 def search_flights(origin: str, destination: str, date: str):
-    return [
-        {
-            "flight_no": "AB123",
-            "origin": origin,
-            "destination": destination,
-            "date": date,
-            "cabin_class": "economy",
-            "arrival_time": "09:15",
-            "price_eur": 280,
-        },
-        {
-            "flight_no": "CD456",
-            "origin": origin,
-            "destination": destination,
-            "date": date,
-            "cabin_class": "business",
-            "arrival_time": "08:40",
-            "price_eur": 950,
-        },
-        {
-            "flight_no": "EF789",
-            "origin": origin,
-            "destination": destination,
-            "date": date,
-            "cabin_class": "economy",
-            "arrival_time": "11:30",
-            "price_eur": 240,
-        },
-    ]
+    return call_mcp_tool(
+        "search_flights", {"origin": origin, "destination": destination, "date": date}
+    )
 
 
 def search_hotels(city: str, checkin: str, checkout: str):
-    return [
-        {"name": "City Center Inn", "city": city, "price_per_night_eur": 190},
-        {"name": "Grand Plaza", "city": city, "price_per_night_eur": 420},
-        {"name": "Budget Stay", "city": city, "price_per_night_eur": 110},
-    ]
+    return call_mcp_tool(
+        "search_hotels", {"city": city, "checkin": checkin, "checkout": checkout}
+    )
 
 
 TOOLS = [
