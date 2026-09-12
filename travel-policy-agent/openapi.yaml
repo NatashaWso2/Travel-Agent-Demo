@@ -1,0 +1,71 @@
+openapi: 3.0.3
+info:
+  title: Travel Policy Agent
+  version: "1.0.0"
+  description: Checks a proposed trip against company travel policy.
+paths:
+  /check-policy:
+    post:
+      operationId: checkPolicy
+      summary: Check a proposed trip against travel policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyRequest'
+      responses:
+        '200':
+          description: Policy decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyResponse'
+  /health:
+    get:
+      operationId: health
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+components:
+  schemas:
+    Trip:
+      type: object
+      required: [origin, destination, cabin_class, arrival_time, total_cost_eur, hotel_price_per_night_eur]
+      properties:
+        origin:
+          type: string
+        destination:
+          type: string
+        cabin_class:
+          type: string
+          example: economy
+        arrival_time:
+          type: string
+          description: 24h HH:MM
+          example: "09:30"
+        total_cost_eur:
+          type: number
+        hotel_price_per_night_eur:
+          type: number
+    PolicyRequest:
+      type: object
+      required: [trip]
+      properties:
+        trip:
+          $ref: '#/components/schemas/Trip'
+    PolicyResponse:
+      type: object
+      properties:
+        decision:
+          type: string
+          enum: [APPROVED, REJECTED]
+        compliant:
+          type: boolean
+        violations:
+          type: array
+          items:
+            type: string
+        policy:
+          type: object
