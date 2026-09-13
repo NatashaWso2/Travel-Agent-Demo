@@ -8,13 +8,17 @@ from pydantic import BaseModel
 
 app = FastAPI(title="Travel Planner Agent")
 
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL")
-LLM_API_KEY = os.environ.get("LLM_API_KEY")
+# LLM_BASE_URL = os.environ.get("LLM_BASE_URL")
+GW_OPENAI_URL = os.environ.get("GW_OPENAI_URL")
+# LLM_API_KEY = os.environ.get("LLM_API_KEY")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 TRAVEL_POLICY_URL = os.environ.get("TRAVEL_POLICY_URL")
 TRAVEL_POLICY_API_KEY = os.environ.get("TRAVEL_POLICY_API_KEY")
 
-client = OpenAI(base_url=LLM_BASE_URL, api_key="unused")
+client = OpenAI(
+    base_url=GW_OPENAI_URL,
+    api_key="unused",
+)
 
 
 # --- Mock flight/hotel tools -------------------------------------------------
