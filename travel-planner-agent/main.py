@@ -137,12 +137,9 @@ class ChatResponse(BaseModel):
     response: str
 
 
-def run_agent_loop(user_message: str) -> dict:
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_message},
-    ]
-
+def run_agent_loop(messages: list) -> dict:
+    """Drives the tool-calling loop on the given (mutated in place) message history
+    and returns the final {summary, trip} plan."""
     for step in range(3):
         step_start = time.monotonic()
         completion = client.chat.completions.create(
@@ -169,9 +166,52 @@ def run_agent_loop(user_message: str) -> dict:
                 )
             continue
 
-        return _parse_json_content(msg.content)
+        plan = _parse_json_content(msg.content)
+        messages.append({"role": "assistant", "content": msg.content})
+        return plan
 
     raise RuntimeError("Planner did not converge on a recommendation")
+
+
+def check_policy(trip: dict) -> dict:
+    return requests.post(
+        f"{TRAVEL_POLICY_URL}/check-policy",
+        json={"trip": trip},
+        headers={"x-api-key": TRAVEL_POLICY_API_KEY},
+        timeout=15,
+    ).json()
+
+
+POLICY_RETRY_PROMPT = """That proposal was rejected by company travel policy for these reasons:
+{violations}
+
+Propose a different flight and hotel combination that avoids all of these issues (call the
+tools again if needed), and reply again using the exact same JSON format as before."""
+
+
+def propose_compliant_trip(user_message: str):
+    """Returns (plan, policy_result, alt_plan, alt_policy_result). alt_* are None if the
+    first proposal was already compliant."""
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_message},
+    ]
+
+    plan = run_agent_loop(messages)
+    policy_result = check_policy(plan["trip"])
+
+    if policy_result["compliant"]:
+        return plan, policy_result, None, None
+
+    violations_text = "\n".join(f"- {v}" for v in policy_result["violations"])
+    messages.append(
+        {"role": "user", "content": POLICY_RETRY_PROMPT.format(violations=violations_text)}
+    )
+
+    alt_plan = run_agent_loop(messages)
+    alt_policy_result = check_policy(alt_plan["trip"])
+
+    return plan, policy_result, alt_plan, alt_policy_result
 
 
 def _parse_json_content(content: str | None) -> dict:
@@ -199,24 +239,34 @@ def health():
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     request_start = time.monotonic()
-    plan = run_agent_loop(req.message)
-    logger.info("run_agent_loop total: %.2fs", time.monotonic() - request_start)
-    trip = plan["trip"]
+    plan, policy_result, alt_plan, alt_policy_result = propose_compliant_trip(req.message)
+    logger.info("full request handling took %.2fs", time.monotonic() - request_start)
 
-    policy_start = time.monotonic()
-    policy_result = requests.post(
-        f"{TRAVEL_POLICY_URL}/check-policy",
-        json={"trip": trip},
-        headers={"x-api-key": TRAVEL_POLICY_API_KEY},
-        timeout=15,
-    ).json()
-    logger.info("policy check took %.2fs", time.monotonic() - policy_start)
+    if policy_result["compliant"]:
+        return ChatResponse(
+            response=f"{plan['summary']}\n\nThis trip is compliant with company travel policy."
+        )
 
-    lines = [plan["summary"], "", f"Policy decision: {policy_result['decision']}"]
-    if policy_result["violations"]:
-        lines.append("Violations:")
-        lines += [f"- {v}" for v in policy_result["violations"]]
+    violation_lines = [f"- {v}" for v in policy_result["violations"]]
 
+    if alt_policy_result and alt_policy_result["compliant"]:
+        lines = [
+            "What you asked for isn't allowed under company travel policy:",
+            *violation_lines,
+            "",
+            "Here's what we can offer instead:",
+            alt_plan["summary"],
+        ]
+        return ChatResponse(response="\n".join(lines))
+
+    lines = [
+        "What you asked for isn't allowed under company travel policy:",
+        *violation_lines,
+        "",
+        "We couldn't automatically find a fully compliant alternative. Please adjust your "
+        "request (economy class, total cost under EUR700, hotel under EUR350/night, arrival "
+        "before 10:00) and try again.",
+    ]
     return ChatResponse(response="\n".join(lines))
 
 
