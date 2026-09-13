@@ -207,7 +207,7 @@ def chat(req: ChatRequest):
     policy_result = requests.post(
         f"{TRAVEL_POLICY_URL}/check-policy",
         json={"trip": trip},
-        headers={"X-API-Key": TRAVEL_POLICY_API_KEY},
+        headers={"x-api-key": TRAVEL_POLICY_API_KEY},
         timeout=15,
     ).json()
     logger.info("policy check took %.2fs", time.monotonic() - policy_start)
