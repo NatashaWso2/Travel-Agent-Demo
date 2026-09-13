@@ -148,7 +148,8 @@ def run_agent_loop(user_message: str) -> dict:
             messages.append(msg.model_dump(exclude_none=True))
             for call in msg.tool_calls:
                 fn = TOOL_IMPL[call.function.name]
-                args = json.loads(call.function.arguments or "{}")
+                args_str = (call.function.arguments or "").strip()
+                args = json.loads(args_str) if args_str else {}
                 result = fn(**args)
                 messages.append(
                     {
@@ -159,9 +160,26 @@ def run_agent_loop(user_message: str) -> dict:
                 )
             continue
 
-        return json.loads(msg.content)
+        return _parse_json_content(msg.content)
 
     raise RuntimeError("Planner did not converge on a recommendation")
+
+
+def _parse_json_content(content: str | None) -> dict:
+    if not content or not content.strip():
+        raise RuntimeError("LLM returned empty content instead of the expected JSON")
+
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if "\n" in text:
+            first_line, rest = text.split("\n", 1)
+            text = rest if first_line.strip().lower() in ("", "json") else text
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Could not parse LLM response as JSON: {content!r}") from e
 
 
 @app.get("/health")
