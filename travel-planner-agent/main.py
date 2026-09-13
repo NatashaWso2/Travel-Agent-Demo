@@ -12,10 +12,15 @@ LLM_BASE_URL = os.environ.get("LLM_BASE_URL")
 LLM_API_KEY = os.environ.get("LLM_API_KEY")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 TRAVEL_POLICY_URL = os.environ.get("TRAVEL_POLICY_URL")
-X_API_KEY = os.environ.get("X_API_KEY")
+TRAVEL_POLICY_API_KEY = os.environ.get("TRAVEL_POLICY_API_KEY")
+
+client = OpenAI(
+    base_url=LLM_BASE_URL,
+    api_key="",
+    default_headers={"API-Key": LLM_API_KEY, "Authorization": ""},
+)
 
 
-client = OpenAI(base_url=LLM_BASE_URL, api_key=X_API_KEY, default_headers={"API-Key": X_API_KEY, "Authorization": ""})
 # --- Mock flight/hotel tools -------------------------------------------------
 
 def search_flights(origin: str, destination: str, date: str):
@@ -170,7 +175,10 @@ def chat(req: ChatRequest):
     trip = plan["trip"]
 
     policy_result = requests.post(
-        f"{TRAVEL_POLICY_URL}/check-policy", json={"trip": trip}, timeout=15
+        f"{TRAVEL_POLICY_URL}/check-policy",
+        json={"trip": trip},
+        headers={"X-API-Key": TRAVEL_POLICY_API_KEY},
+        timeout=15,
     ).json()
 
     lines = [plan["summary"], "", f"Policy decision: {policy_result['decision']}"]
