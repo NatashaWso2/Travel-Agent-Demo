@@ -1,10 +1,15 @@
 import json
+import logging
 import os
+import time
 
 import requests
 from fastapi import FastAPI
 from openai import OpenAI
 from pydantic import BaseModel
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("travel-planner")
 
 app = FastAPI(title="Travel Planner Agent")
 
@@ -18,6 +23,8 @@ TRAVEL_POLICY_API_KEY = os.environ.get("TRAVEL_POLICY_API_KEY")
 client = OpenAI(
     base_url=GW_OPENAI_URL,
     api_key="unused",
+    timeout=20.0,
+    max_retries=0,
 )
 
 
@@ -136,12 +143,14 @@ def run_agent_loop(user_message: str) -> dict:
         {"role": "user", "content": user_message},
     ]
 
-    for _ in range(5):
+    for step in range(3):
+        step_start = time.monotonic()
         completion = client.chat.completions.create(
             model=LLM_MODEL,
             messages=messages,
             tools=TOOLS,
         )
+        logger.info("LLM call (step %d) took %.2fs", step, time.monotonic() - step_start)
         msg = completion.choices[0].message
 
         if msg.tool_calls:
@@ -189,15 +198,19 @@ def health():
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
+    request_start = time.monotonic()
     plan = run_agent_loop(req.message)
+    logger.info("run_agent_loop total: %.2fs", time.monotonic() - request_start)
     trip = plan["trip"]
 
+    policy_start = time.monotonic()
     policy_result = requests.post(
         f"{TRAVEL_POLICY_URL}/check-policy",
         json={"trip": trip},
         headers={"X-API-Key": TRAVEL_POLICY_API_KEY},
         timeout=15,
     ).json()
+    logger.info("policy check took %.2fs", time.monotonic() - policy_start)
 
     lines = [plan["summary"], "", f"Policy decision: {policy_result['decision']}"]
     if policy_result["violations"]:
