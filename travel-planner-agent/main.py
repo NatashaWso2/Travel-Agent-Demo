@@ -14,6 +14,9 @@ LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 TRAVEL_POLICY_URL = os.environ.get("TRAVEL_POLICY_URL")
 
 client = OpenAI(base_url=LLM_BASE_URL, api_key="", default_headers={"API-Key": LLM_API_KEY, "Authorization": ""})
+echo "Client initialized"
+echo LLM_API_KEY
+echo LLM_BASE_URL
 
 
 # --- Mock flight/hotel tools -------------------------------------------------
