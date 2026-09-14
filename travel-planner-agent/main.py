@@ -24,8 +24,7 @@ TRAVEL_POLICY_URL = os.environ.get("TRAVEL_POLICY_URL")
 TRAVEL_POLICY_API_KEY = os.environ.get("TRAVEL_POLICY_API_KEY")
 
 # Injected by the "Configure MCP Tools" binding on this agent in the console.
-MCP_TOOLS_URL = os.environ.get("MCP_TOOLS_URL")
-MCP_TOOLS_API_KEY = os.environ.get("MCP_TOOLS_API_KEY")
+FLIGHT_HOTEL_TOOLS_URL = os.environ.get("FLIGHT_HOTEL_TOOLS_URL")
 
 client = OpenAI(
     base_url=GW_OPENAI_URL,
@@ -39,8 +38,7 @@ client = OpenAI(
 
 def call_mcp_tool(name: str, arguments: dict) -> list:
     async def _call():
-        headers = {"API-Key": MCP_TOOLS_API_KEY}
-        async with streamablehttp_client(MCP_TOOLS_URL, headers=headers) as (
+        async with streamablehttp_client(FLIGHT_HOTEL_TOOLS_URL) as (
             read,
             write,
             _,
@@ -244,8 +242,6 @@ def _try_parse_trip_json(content: str | None) -> dict | None:
         if isinstance(parsed, dict) and "trip" in parsed and "summary" in parsed:
             return parsed
         search_start = end_pos
-
-    return parsed
 
 
 @app.get("/health")
