@@ -220,26 +220,29 @@ def plan_trip(messages: list, user_message: str):
 
 
 def _try_parse_trip_json(content: str | None) -> dict | None:
-    """Best-effort parse of a {summary, trip} plan. Returns None (not an error) if the
-    content isn't that shape -- e.g. the model is just chatting or asking a clarifying
-    question, which is expected for messages like "hi" or "help me plan a trip"."""
+    """Best-effort extraction of a {summary, trip} plan from the model's reply. Returns
+    None (not an error) if no such object is found -- e.g. the model is just chatting or
+    asking a clarifying question, which is expected for messages like "hi". Tolerates the
+    model wrapping the JSON in markdown, or adding commentary before/after it -- despite
+    the system prompt asking for JSON only, models don't always follow that strictly."""
     if not content or not content.strip():
         return None
 
-    text = content.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if "\n" in text:
-            first_line, rest = text.split("\n", 1)
-            text = rest if first_line.strip().lower() in ("", "json") else text
+    decoder = json.JSONDecoder()
+    search_start = 0
+    while True:
+        brace_pos = content.find("{", search_start)
+        if brace_pos == -1:
+            return None
+        try:
+            parsed, end_pos = decoder.raw_decode(content, brace_pos)
+        except json.JSONDecodeError:
+            search_start = brace_pos + 1
+            continue
 
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-
-    if not isinstance(parsed, dict) or "trip" not in parsed or "summary" not in parsed:
-        return None
+        if isinstance(parsed, dict) and "trip" in parsed and "summary" in parsed:
+            return parsed
+        search_start = end_pos
 
     return parsed
 
@@ -261,20 +264,21 @@ def chat(req: ChatRequest):
         # details before it can propose a trip) -- pass that straight through.
         return ChatResponse(response=plan)
 
-    trip_lines = _format_trip_details(plan["trip"])
-
     if policy_result["compliant"]:
-        lines = ["Here's your trip recommendation:", "", *trip_lines, "", "This trip is compliant with company travel policy."]
+        trip_lines = _format_trip_details(plan["trip"])
+        lines = [
+            "This trip is compliant with company travel policy. Proceeding with booking:",
+            "",
+            *trip_lines,
+        ]
         return ChatResponse(response="\n".join(lines))
 
     violation_lines = [f"- {v}" for v in policy_result["violations"]]
     lines = [
-        "This is the option you requested:",
-        "",
-        *trip_lines,
-        "",
-        "This isn't allowed under company travel policy:",
+        "This trip could not be booked because it violates company travel policy:",
         *violation_lines,
+        "",
+        "Please try a different option.",
     ]
     return ChatResponse(response="\n".join(lines))
 
