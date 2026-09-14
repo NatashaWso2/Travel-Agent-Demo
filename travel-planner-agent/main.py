@@ -108,8 +108,15 @@ TOOLS = [
 TOOL_IMPL = {"search_flights": search_flights, "search_hotels": search_hotels}
 
 SYSTEM_PROMPT = """You are the Travel Planner Agent. Help the user plan a trip using the
-search_flights and search_hotels tools. Once you have picked one flight and one hotel,
-reply with a final message that is ONLY a JSON object (no markdown, no extra text) shaped like:
+search_flights and search_hotels tools.
+
+If you don't yet have enough information to search (e.g. origin, destination, or travel
+dates are missing), or the user is just greeting you / asking a general question, reply
+normally in plain text and ask for whatever is missing. Do not use the JSON format below
+until you are actually proposing a concrete trip.
+
+Once you have picked one flight and one hotel, reply with a final message that is ONLY a
+JSON object (no markdown, no extra text) shaped like:
 
 {
   "summary": "<one paragraph human-readable recommendation>",
@@ -137,9 +144,10 @@ class ChatResponse(BaseModel):
     response: str
 
 
-def run_agent_loop(messages: list) -> dict:
-    """Drives the tool-calling loop on the given (mutated in place) message history
-    and returns the final {summary, trip} plan."""
+def run_agent_loop(messages: list) -> dict | str:
+    """Drives the tool-calling loop on the given (mutated in place) message history.
+    Returns a {summary, trip} dict once the model proposes a concrete trip, or a plain
+    string if the model is instead asking a clarifying question / just chatting."""
     for step in range(3):
         step_start = time.monotonic()
         completion = client.chat.completions.create(
@@ -166,9 +174,9 @@ def run_agent_loop(messages: list) -> dict:
                 )
             continue
 
-        plan = _parse_json_content(msg.content)
         messages.append({"role": "assistant", "content": msg.content})
-        return plan
+        plan = _try_parse_trip_json(msg.content)
+        return plan if plan is not None else msg.content
 
     raise RuntimeError("Planner did not converge on a recommendation")
 
@@ -182,41 +190,29 @@ def check_policy(trip: dict) -> dict:
     ).json()
 
 
-POLICY_RETRY_PROMPT = """That proposal was rejected by company travel policy for these reasons:
-{violations}
-
-Propose a different flight and hotel combination that avoids all of these issues (call the
-tools again if needed), and reply again using the exact same JSON format as before."""
-
-
-def propose_compliant_trip(user_message: str):
-    """Returns (plan, policy_result, alt_plan, alt_policy_result). alt_* are None if the
-    first proposal was already compliant."""
+def plan_trip(user_message: str):
+    """Returns (plan, policy_result).
+    - If the model replied conversationally (no concrete trip yet), plan is that plain
+      string and policy_result is None -- caller should return it as-is.
+    - Otherwise plan is a {summary, trip} dict and policy_result is the compliance check."""
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_message},
     ]
 
     plan = run_agent_loop(messages)
-    policy_result = check_policy(plan["trip"])
+    if not isinstance(plan, dict):
+        return plan, None
 
-    if policy_result["compliant"]:
-        return plan, policy_result, None, None
-
-    violations_text = "\n".join(f"- {v}" for v in policy_result["violations"])
-    messages.append(
-        {"role": "user", "content": POLICY_RETRY_PROMPT.format(violations=violations_text)}
-    )
-
-    alt_plan = run_agent_loop(messages)
-    alt_policy_result = check_policy(alt_plan["trip"])
-
-    return plan, policy_result, alt_plan, alt_policy_result
+    return plan, check_policy(plan["trip"])
 
 
-def _parse_json_content(content: str | None) -> dict:
+def _try_parse_trip_json(content: str | None) -> dict | None:
+    """Best-effort parse of a {summary, trip} plan. Returns None (not an error) if the
+    content isn't that shape -- e.g. the model is just chatting or asking a clarifying
+    question, which is expected for messages like "hi" or "help me plan a trip"."""
     if not content or not content.strip():
-        raise RuntimeError("LLM returned empty content instead of the expected JSON")
+        return None
 
     text = content.strip()
     if text.startswith("```"):
@@ -226,9 +222,14 @@ def _parse_json_content(content: str | None) -> dict:
             text = rest if first_line.strip().lower() in ("", "json") else text
 
     try:
-        return json.loads(text)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Could not parse LLM response as JSON: {content!r}") from e
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(parsed, dict) or "trip" not in parsed or "summary" not in parsed:
+        return None
+
+    return parsed
 
 
 @app.get("/health")
@@ -239,8 +240,13 @@ def health():
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     request_start = time.monotonic()
-    plan, policy_result, alt_plan, alt_policy_result = propose_compliant_trip(req.message)
+    plan, policy_result = plan_trip(req.message)
     logger.info("full request handling took %.2fs", time.monotonic() - request_start)
+
+    if policy_result is None:
+        # The model just replied conversationally (e.g. a greeting, or it needs more
+        # details before it can propose a trip) -- pass that straight through.
+        return ChatResponse(response=plan)
 
     if policy_result["compliant"]:
         return ChatResponse(
@@ -248,24 +254,9 @@ def chat(req: ChatRequest):
         )
 
     violation_lines = [f"- {v}" for v in policy_result["violations"]]
-
-    if alt_policy_result and alt_policy_result["compliant"]:
-        lines = [
-            "What you asked for isn't allowed under company travel policy:",
-            *violation_lines,
-            "",
-            "Here's what we can offer instead:",
-            alt_plan["summary"],
-        ]
-        return ChatResponse(response="\n".join(lines))
-
     lines = [
         "What you asked for isn't allowed under company travel policy:",
         *violation_lines,
-        "",
-        "We couldn't automatically find a fully compliant alternative. Please adjust your "
-        "request (economy class, total cost under EUR700, hotel under EUR350/night, arrival "
-        "before 10:00) and try again.",
     ]
     return ChatResponse(response="\n".join(lines))
 
