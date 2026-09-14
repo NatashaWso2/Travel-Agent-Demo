@@ -267,40 +267,36 @@ def chat(req: ChatRequest):
 
     violations = policy_result["violations"]
     suggestions = _suggestions_for(violations, plan["trip"])
-    body = ["Doesn't clear company travel policy:"]
-    body += [f"  x {v['message']}" for v in violations]
+    body = ["**Doesn't clear company travel policy:**"]
+    body += [f"- {v['message']}" for v in violations]
     body.append("")
-    body.append("To get this approved:")
-    body += [f"  > {s}" for s in suggestions]
+    body.append("**To get this approved:**")
+    body += suggestions
     return ChatResponse(response=_render_card("REJECTED", plan["trip"], body))
 
 
 def _render_card(status: str, trip: dict, body: list[str]) -> str:
-    """One consistent 'ticket stub' shape for every trip outcome -- same header, same
-    field layout, same rule -- so the reply reads as one system rather than a different
-    format every time."""
-    rule = "-" * 46
+    """One consistent shape for every trip outcome -- same lead line, same field list,
+    same layout -- written as Markdown, since the console renders the response that way
+    (plain ASCII rules/columns get mangled: a lone dashed line under text becomes a
+    Markdown heading underline, and single '\\n's between lines collapse to a space)."""
     flight_no = trip.get("flight_no") or "-"
     cabin = str(trip.get("cabin_class", "")).title()
     hotel_name = trip.get("hotel_name")
     hotel_price = _fmt_eur(trip.get("hotel_price_per_night_eur"))
-    hotel_line = f"{hotel_name} ({hotel_price}/night)" if hotel_name else f"{hotel_price}/night"
+    hotel_line = f"{hotel_name} · {hotel_price}/night" if hotel_name else f"{hotel_price}/night"
+    fare = f" · {_fmt_eur(trip['flight_price_eur'])}" if trip.get("flight_price_eur") is not None else ""
 
     lines = [
-        rule,
-        f" TRAVEL PLANNER -- BOOKING {status}",
-        rule,
-        f" Flight   {flight_no}  ({trip.get('origin')} -> {trip.get('destination')})",
-        f" Class    {cabin}",
-        f" Arrives  {trip.get('arrival_time')}",
+        f"**Booking {status}**",
+        "",
+        f"- **Flight** {flight_no} · {trip.get('origin')} → {trip.get('destination')} · "
+        f"{cabin} · arrives {trip.get('arrival_time')}{fare}",
+        f"- **Hotel** {hotel_line}",
+        f"- **Total** {_fmt_eur(trip.get('total_cost_eur'))}",
+        "",
+        *body,
     ]
-    if trip.get("flight_price_eur") is not None:
-        lines.append(f" Fare     {_fmt_eur(trip['flight_price_eur'])}")
-    lines.append(f" Hotel    {hotel_line}")
-    lines.append(f" Total    {_fmt_eur(trip.get('total_cost_eur'))}")
-    lines.append(rule)
-    lines += [f" {b}" if b else "" for b in body]
-    lines.append(rule)
     return "\n".join(lines)
 
 
