@@ -121,12 +121,15 @@ JSON object (no markdown, no extra text) shaped like:
 {
   "summary": "<one paragraph human-readable recommendation>",
   "trip": {
+    "flight_no": "...",
     "origin": "...",
     "destination": "...",
     "cabin_class": "economy|business|...",
     "arrival_time": "HH:MM",
-    "total_cost_eur": <flight price + one night hotel price>,
-    "hotel_price_per_night_eur": <number>
+    "flight_price_eur": <number>,
+    "hotel_name": "...",
+    "hotel_price_per_night_eur": <number>,
+    "total_cost_eur": <flight price + one night hotel price>
   }
 }
 
@@ -258,17 +261,39 @@ def chat(req: ChatRequest):
         # details before it can propose a trip) -- pass that straight through.
         return ChatResponse(response=plan)
 
+    trip_lines = _format_trip_details(plan["trip"])
+
     if policy_result["compliant"]:
-        return ChatResponse(
-            response=f"{plan['summary']}\n\nThis trip is compliant with company travel policy."
-        )
+        lines = ["Here's your trip recommendation:", "", *trip_lines, "", "This trip is compliant with company travel policy."]
+        return ChatResponse(response="\n".join(lines))
 
     violation_lines = [f"- {v}" for v in policy_result["violations"]]
     lines = [
-        "What you asked for isn't allowed under company travel policy:",
+        "This is the option you requested:",
+        "",
+        *trip_lines,
+        "",
+        "This isn't allowed under company travel policy:",
         *violation_lines,
     ]
     return ChatResponse(response="\n".join(lines))
+
+
+def _format_trip_details(trip: dict) -> list[str]:
+    lines = []
+    flight_no = trip.get("flight_no")
+    flight_bits = f"Flight {flight_no}: " if flight_no else "Flight: "
+    lines.append(
+        f"{flight_bits}{trip.get('origin')} -> {trip.get('destination')}, "
+        f"{trip.get('cabin_class')}, arrives {trip.get('arrival_time')}"
+        + (f", EUR{trip['flight_price_eur']}" if trip.get("flight_price_eur") is not None else "")
+    )
+    if trip.get("hotel_name"):
+        lines.append(f"Hotel: {trip['hotel_name']}, EUR{trip.get('hotel_price_per_night_eur')}/night")
+    else:
+        lines.append(f"Hotel: EUR{trip.get('hotel_price_per_night_eur')}/night")
+    lines.append(f"Total estimated cost: EUR{trip.get('total_cost_eur')}")
+    return lines
 
 
 if __name__ == "__main__":
