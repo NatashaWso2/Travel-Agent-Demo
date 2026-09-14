@@ -196,12 +196,62 @@ def check_policy(trip: dict) -> dict:
 # a real deployment would back this with a shared store (redis, db, etc).
 SESSIONS: dict[str, list] = {}
 
+# Tracks, per session, a trip that was just rejected and offered up for an alternative
+# search -- so the *next* message can be a plain "yes"/"no" rather than a fresh request.
+PENDING_ALTERNATIVE: dict[str, dict] = {}
+
 
 def get_session_messages(session_id: str | None) -> list:
     key = session_id or "default"
     if key not in SESSIONS:
         SESSIONS[key] = [{"role": "system", "content": SYSTEM_PROMPT}]
     return SESSIONS[key]
+
+
+def _looks_affirmative(text: str) -> bool:
+    t = text.strip().lower().rstrip(".!")
+    return t in {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please", "please do", "go ahead", "do it", "y"}
+
+
+def _looks_negative(text: str) -> bool:
+    t = text.strip().lower().rstrip(".!")
+    return t in {"no", "nope", "nah", "not now", "no thanks", "n"}
+
+
+def _find_compliant_alternative(trip: dict) -> dict | None:
+    """Re-searches flights/hotels for the same route and returns the cheapest
+    combination that actually passes the Policy Agent's check -- a real, verified
+    alternative rather than another LLM guess. Returns None if nothing available
+    on this route is compliant."""
+    try:
+        flights = search_flights(trip.get("origin", ""), trip.get("destination", ""), "")
+        hotels = search_hotels(trip.get("destination", ""), "", "")
+    except Exception:
+        logger.exception("Failed to fetch alternatives for a rejected trip")
+        return None
+
+    candidates = []
+    for f in flights:
+        for h in hotels:
+            candidates.append(
+                {
+                    "flight_no": f.get("flight_no"),
+                    "origin": f.get("origin", trip.get("origin")),
+                    "destination": f.get("destination", trip.get("destination")),
+                    "cabin_class": f.get("cabin_class"),
+                    "arrival_time": f.get("arrival_time"),
+                    "flight_price_eur": f.get("price_eur"),
+                    "hotel_name": h.get("name"),
+                    "hotel_price_per_night_eur": h.get("price_per_night_eur"),
+                    "total_cost_eur": (f.get("price_eur") or 0) + (h.get("price_per_night_eur") or 0),
+                }
+            )
+    candidates.sort(key=lambda c: c["total_cost_eur"])
+
+    for candidate in candidates:
+        if check_policy(candidate).get("compliant"):
+            return candidate
+    return None
 
 
 def plan_trip(messages: list, user_message: str):
@@ -252,7 +302,32 @@ def health():
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     request_start = time.monotonic()
+    session_key = req.session_id or "default"
     messages = get_session_messages(req.session_id)
+
+    pending_trip = PENDING_ALTERNATIVE.pop(session_key, None)
+    if pending_trip is not None:
+        if _looks_affirmative(req.message):
+            messages.append({"role": "user", "content": req.message})
+            alternative = _find_compliant_alternative(pending_trip)
+            if alternative:
+                messages.append(
+                    {"role": "assistant", "content": f"Offered a compliant alternative: {alternative}"}
+                )
+                body = ["Within company travel policy. Ticket booked -- have a good trip."]
+                return ChatResponse(response=_render_card("APPROVED", alternative, body))
+            messages.append({"role": "assistant", "content": "No compliant alternative was found."})
+            return ChatResponse(
+                response=(
+                    "I couldn't find a compliant option on this route automatically. "
+                    "Try asking for something specific -- economy class, a cheaper hotel, "
+                    "or an earlier arrival."
+                )
+            )
+        if _looks_negative(req.message):
+            return ChatResponse(response="No problem -- let me know if you'd like to plan a different trip.")
+        # Not a clear yes/no -- treat it as a fresh message instead of getting stuck.
+
     plan, policy_result = plan_trip(messages, req.message)
     logger.info("full request handling took %.2fs", time.monotonic() - request_start)
 
@@ -272,6 +347,9 @@ def chat(req: ChatRequest):
     body.append("")
     body.append("**To get this approved:**")
     body += suggestions
+    body.append("")
+    body.append("Would you like me to look at another option that fits policy? (yes/no)")
+    PENDING_ALTERNATIVE[session_key] = plan["trip"]
     return ChatResponse(response=_render_card("REJECTED", plan["trip"], body))
 
 
