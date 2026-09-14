@@ -66,6 +66,12 @@ components:
         violations:
           type: array
           items:
-            type: string
+            type: object
+            properties:
+              rule:
+                type: string
+                enum: [budget, cabin_class, arrival_time, hotel_price]
+              message:
+                type: string
         policy:
           type: object

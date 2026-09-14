@@ -36,26 +36,46 @@ def check_policy(req: PolicyRequest):
 
     if trip.total_cost_eur > POLICY["max_budget_eur"]:
         violations.append(
-            f"Total cost EUR{trip.total_cost_eur} exceeds budget cap of "
-            f"EUR{POLICY['max_budget_eur']}"
+            {
+                "rule": "budget",
+                "message": (
+                    f"Total cost EUR{trip.total_cost_eur} exceeds budget cap of "
+                    f"EUR{POLICY['max_budget_eur']}"
+                ),
+            }
         )
 
     if trip.cabin_class.lower() not in POLICY["allowed_cabin_classes"]:
         violations.append(
-            f"Cabin class '{trip.cabin_class}' is not allowed "
-            f"(only {', '.join(POLICY['allowed_cabin_classes'])})"
+            {
+                "rule": "cabin_class",
+                "message": (
+                    f"Cabin class '{trip.cabin_class}' is not allowed "
+                    f"(only {', '.join(POLICY['allowed_cabin_classes'])})"
+                ),
+            }
         )
 
     if trip.arrival_time > POLICY["latest_arrival_time"]:
         violations.append(
-            f"Arrival time {trip.arrival_time} is later than the "
-            f"{POLICY['latest_arrival_time']} cutoff"
+            {
+                "rule": "arrival_time",
+                "message": (
+                    f"Arrival time {trip.arrival_time} is later than the "
+                    f"{POLICY['latest_arrival_time']} cutoff"
+                ),
+            }
         )
 
     if trip.hotel_price_per_night_eur > POLICY["max_hotel_price_per_night_eur"]:
         violations.append(
-            f"Hotel price EUR{trip.hotel_price_per_night_eur}/night exceeds cap of "
-            f"EUR{POLICY['max_hotel_price_per_night_eur']}/night"
+            {
+                "rule": "hotel_price",
+                "message": (
+                    f"Hotel price EUR{trip.hotel_price_per_night_eur}/night exceeds cap of "
+                    f"EUR{POLICY['max_hotel_price_per_night_eur']}/night"
+                ),
+            }
         )
 
     return {

@@ -264,20 +264,52 @@ def chat(req: ChatRequest):
     if policy_result["compliant"]:
         trip_lines = _format_trip_details(plan["trip"])
         lines = [
-            "This trip is compliant with company travel policy. Proceeding with booking:",
+            "Good news -- this trip is within company travel policy, so I'm proceeding with booking it:",
             "",
             *trip_lines,
         ]
         return ChatResponse(response="\n".join(lines))
 
-    violation_lines = [f"- {v}" for v in policy_result["violations"]]
+    violations = policy_result["violations"]
+    violation_lines = [f"- {v['message']}" for v in violations]
+    suggestion_lines = _suggestions_for(violations, plan["trip"])
     lines = [
-        "This trip could not be booked because it violates company travel policy:",
+        "I can't book this one -- it falls outside company travel policy:",
         *violation_lines,
         "",
-        "Please try a different option.",
+        "Here's how to get it approved:",
+        *suggestion_lines,
     ]
     return ChatResponse(response="\n".join(lines))
+
+
+RULE_SUGGESTIONS = {
+    "budget": "Bring the total cost under {policy[max_budget_eur]} -- try a cheaper flight or hotel.",
+    "cabin_class": "Book an economy fare instead of {trip[cabin_class]}.",
+    "arrival_time": "Look for a flight that arrives before {policy[latest_arrival_time]}.",
+    "hotel_price": "Choose a hotel at or under {policy[max_hotel_price_per_night_eur]} per night.",
+}
+
+
+def _suggestions_for(violations: list[dict], trip: dict) -> list[str]:
+    policy = {
+        "max_budget_eur": _fmt_eur(700),
+        "latest_arrival_time": "10:00",
+        "max_hotel_price_per_night_eur": _fmt_eur(350),
+    }
+    lines = []
+    for v in violations:
+        template = RULE_SUGGESTIONS.get(v["rule"])
+        if template:
+            lines.append(f"- {template.format(policy=policy, trip=trip)}")
+    return lines or ["- Adjust the trip to fit company travel policy and ask again."]
+
+
+def _fmt_eur(value) -> str:
+    try:
+        return f"€{float(value):,.0f}"
+    except (TypeError, ValueError):
+        return f"€{value}"
 
 
 def _format_trip_details(trip: dict) -> list[str]:
@@ -287,13 +319,14 @@ def _format_trip_details(trip: dict) -> list[str]:
     lines.append(
         f"{flight_bits}{trip.get('origin')} -> {trip.get('destination')}, "
         f"{trip.get('cabin_class')}, arrives {trip.get('arrival_time')}"
-        + (f", EUR{trip['flight_price_eur']}" if trip.get("flight_price_eur") is not None else "")
+        + (f", {_fmt_eur(trip['flight_price_eur'])}" if trip.get("flight_price_eur") is not None else "")
     )
+    hotel_price = _fmt_eur(trip.get("hotel_price_per_night_eur"))
     if trip.get("hotel_name"):
-        lines.append(f"Hotel: {trip['hotel_name']}, EUR{trip.get('hotel_price_per_night_eur')}/night")
+        lines.append(f"Hotel: {trip['hotel_name']}, {hotel_price}/night")
     else:
-        lines.append(f"Hotel: EUR{trip.get('hotel_price_per_night_eur')}/night")
-    lines.append(f"Total estimated cost: EUR{trip.get('total_cost_eur')}")
+        lines.append(f"Hotel: {hotel_price}/night")
+    lines.append(f"Total estimated cost: {_fmt_eur(trip.get('total_cost_eur'))}")
     return lines
 
 
