@@ -262,11 +262,9 @@ def chat(req: ChatRequest):
         return ChatResponse(response=plan)
 
     if policy_result["compliant"]:
-        trip_lines = _format_trip_details(plan["trip"])
         lines = [
-            "Good news -- this trip is within company travel policy, so I'm proceeding with booking it:",
-            "",
-            *trip_lines,
+            "APPROVED -- within company travel policy. Proceeding with booking:",
+            _format_trip_line(plan["trip"]),
         ]
         return ChatResponse(response="\n".join(lines))
 
@@ -274,10 +272,15 @@ def chat(req: ChatRequest):
     violation_lines = [f"- {v['message']}" for v in violations]
     suggestion_lines = _suggestions_for(violations, plan["trip"])
     lines = [
-        "I can't book this one -- it falls outside company travel policy:",
+        "REJECTED -- outside company travel policy.",
+        "",
+        "What was proposed:",
+        _format_trip_line(plan["trip"]),
+        "",
+        "Why it doesn't match:",
         *violation_lines,
         "",
-        "Here's how to get it approved:",
+        "To get this approved:",
         *suggestion_lines,
     ]
     return ChatResponse(response="\n".join(lines))
@@ -312,22 +315,22 @@ def _fmt_eur(value) -> str:
         return f"€{value}"
 
 
-def _format_trip_details(trip: dict) -> list[str]:
-    lines = []
+def _format_trip_line(trip: dict) -> str:
+    """One self-contained, '.'-delimited line so the trip stays readable even if the
+    client displaying it collapses line breaks."""
+    parts = []
     flight_no = trip.get("flight_no")
-    flight_bits = f"Flight {flight_no}: " if flight_no else "Flight: "
-    lines.append(
-        f"{flight_bits}{trip.get('origin')} -> {trip.get('destination')}, "
-        f"{trip.get('cabin_class')}, arrives {trip.get('arrival_time')}"
-        + (f", {_fmt_eur(trip['flight_price_eur'])}" if trip.get("flight_price_eur") is not None else "")
-    )
+    parts.append(f"Flight {flight_no}" if flight_no else "Flight")
+    parts.append(f"{trip.get('origin')} -> {trip.get('destination')}")
+    parts.append(str(trip.get("cabin_class")))
+    parts.append(f"arrives {trip.get('arrival_time')}")
+    if trip.get("flight_price_eur") is not None:
+        parts.append(_fmt_eur(trip["flight_price_eur"]))
+    hotel_name = trip.get("hotel_name")
     hotel_price = _fmt_eur(trip.get("hotel_price_per_night_eur"))
-    if trip.get("hotel_name"):
-        lines.append(f"Hotel: {trip['hotel_name']}, {hotel_price}/night")
-    else:
-        lines.append(f"Hotel: {hotel_price}/night")
-    lines.append(f"Total estimated cost: {_fmt_eur(trip.get('total_cost_eur'))}")
-    return lines
+    parts.append(f"Hotel {hotel_name} {hotel_price}/night" if hotel_name else f"Hotel {hotel_price}/night")
+    parts.append(f"Total {_fmt_eur(trip.get('total_cost_eur'))}")
+    return " · ".join(parts)
 
 
 if __name__ == "__main__":

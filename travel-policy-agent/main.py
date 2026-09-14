@@ -24,6 +24,10 @@ class PolicyRequest(BaseModel):
     trip: Trip
 
 
+def _fmt(value) -> str:
+    return f"{value:,.0f}"
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -39,8 +43,8 @@ def check_policy(req: PolicyRequest):
             {
                 "rule": "budget",
                 "message": (
-                    f"Total cost EUR{trip.total_cost_eur} exceeds budget cap of "
-                    f"EUR{POLICY['max_budget_eur']}"
+                    f"Total cost EUR{_fmt(trip.total_cost_eur)} exceeds budget cap of "
+                    f"EUR{_fmt(POLICY['max_budget_eur'])}"
                 ),
             }
         )
@@ -72,8 +76,8 @@ def check_policy(req: PolicyRequest):
             {
                 "rule": "hotel_price",
                 "message": (
-                    f"Hotel price EUR{trip.hotel_price_per_night_eur}/night exceeds cap of "
-                    f"EUR{POLICY['max_hotel_price_per_night_eur']}/night"
+                    f"Hotel price EUR{_fmt(trip.hotel_price_per_night_eur)}/night exceeds cap of "
+                    f"EUR{_fmt(POLICY['max_hotel_price_per_night_eur'])}/night"
                 ),
             }
         )
