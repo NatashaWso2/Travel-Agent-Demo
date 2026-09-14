@@ -190,15 +190,24 @@ def check_policy(trip: dict) -> dict:
     ).json()
 
 
-def plan_trip(user_message: str):
+# In-memory conversation history per session_id. Fine for a demo with a single replica;
+# a real deployment would back this with a shared store (redis, db, etc).
+SESSIONS: dict[str, list] = {}
+
+
+def get_session_messages(session_id: str | None) -> list:
+    key = session_id or "default"
+    if key not in SESSIONS:
+        SESSIONS[key] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    return SESSIONS[key]
+
+
+def plan_trip(messages: list, user_message: str):
     """Returns (plan, policy_result).
     - If the model replied conversationally (no concrete trip yet), plan is that plain
       string and policy_result is None -- caller should return it as-is.
     - Otherwise plan is a {summary, trip} dict and policy_result is the compliance check."""
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_message},
-    ]
+    messages.append({"role": "user", "content": user_message})
 
     plan = run_agent_loop(messages)
     if not isinstance(plan, dict):
@@ -240,7 +249,8 @@ def health():
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     request_start = time.monotonic()
-    plan, policy_result = plan_trip(req.message)
+    messages = get_session_messages(req.session_id)
+    plan, policy_result = plan_trip(messages, req.message)
     logger.info("full request handling took %.2fs", time.monotonic() - request_start)
 
     if policy_result is None:
